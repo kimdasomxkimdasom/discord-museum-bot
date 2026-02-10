@@ -40,7 +40,7 @@ const commands = [
     .setDescription('대화 히스토리를 초기화합니다'),
 
   new SlashCommandBuilder()
-    .setName('대화')
+    .setName('질문')
     .setDescription('봇과 대화합니다')
     .addStringOption(option =>
       option.setName('메시지')
