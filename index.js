@@ -77,8 +77,8 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 대화
-    if (commandName === '대화') {
+    // 질문
+    if (commandName === '질문') {
       const message = interaction.options.getString('메시지');
       await interaction.deferReply();
 
