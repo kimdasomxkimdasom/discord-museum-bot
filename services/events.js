@@ -59,12 +59,16 @@ async function sendEventNotification(event, guild, subscribers, notifyType, minu
 // 이벤트 알림 체크 함수
 async function checkScheduledEvents(client) {
   const now = Date.now();
+  const koreanNow = getKoreanTime();
   const notifyMinutes = config.events.notifyMinutesBefore;
   const notifyBeforeMs = notifyMinutes * 60 * 1000;
+
+  console.log(`[이벤트 체크] ${koreanNow.toLocaleString('ko-KR')} - 체크 시작`);
 
   for (const guild of client.guilds.cache.values()) {
     try {
       const events = await guild.scheduledEvents.fetch();
+      console.log(`[이벤트 체크] 서버: ${guild.name} - 예정된 이벤트 ${events.size}개`);
 
       for (const event of events.values()) {
         const startTime = event.scheduledStartTimestamp;
@@ -72,18 +76,27 @@ async function checkScheduledEvents(client) {
 
         const timeUntilStart = startTime - now;
         const minutesUntil = Math.round(timeUntilStart / 60000);
+        const eventStartStr = new Date(startTime).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
 
         // 이미 지난 이벤트는 스킵
-        if (timeUntilStart <= 0) continue;
+        if (timeUntilStart <= 0) {
+          console.log(`[이벤트 체크]   - "${event.name}" (${eventStartStr}) → 이미 지남, 스킵`);
+          continue;
+        }
+
+        console.log(`[이벤트 체크]   - "${event.name}" | 시작: ${eventStartStr} | ${minutesUntil}분 후`);
 
         // 1. 당일 아침 알림 (오늘 이벤트 + 아침 시간대)
         const morningKey = `${event.id}_morning`;
         const isTodayEvent = isToday(startTime);
         const isMorning = isMorningNotifyTime();
 
+        console.log(`[이벤트 체크]     오늘이벤트: ${isTodayEvent} | 아침시간대: ${isMorning} | 아침알림발송됨: ${notifiedEvents.has(morningKey)}`);
+
         if (isTodayEvent && isMorning && !notifiedEvents.has(morningKey)) {
           try {
             const subscribers = await event.fetchSubscribers();
+            console.log(`[이벤트 체크]     → 아침 알림 발송! 구독자: ${subscribers.size}명`);
             if (subscribers.size > 0) {
               await sendEventNotification(event, guild, subscribers, 'morning', 0);
             }
@@ -96,10 +109,14 @@ async function checkScheduledEvents(client) {
 
         // 2. 시작 전 알림 (N분 전 이내면 알림)
         const beforeKey = `${event.id}_before`;
+        const isWithinNotifyWindow = timeUntilStart <= notifyBeforeMs && timeUntilStart > 0;
 
-        if (timeUntilStart <= notifyBeforeMs && timeUntilStart > 0 && !notifiedEvents.has(beforeKey)) {
+        console.log(`[이벤트 체크]     ${notifyMinutes}분전알림범위: ${isWithinNotifyWindow} | 시작전알림발송됨: ${notifiedEvents.has(beforeKey)}`);
+
+        if (isWithinNotifyWindow && !notifiedEvents.has(beforeKey)) {
           try {
             const subscribers = await event.fetchSubscribers();
+            console.log(`[이벤트 체크]     → ${minutesUntil}분 전 알림 발송! 구독자: ${subscribers.size}명`);
             if (subscribers.size > 0) {
               await sendEventNotification(event, guild, subscribers, 'before', minutesUntil);
             }
@@ -114,6 +131,7 @@ async function checkScheduledEvents(client) {
       console.error(`[이벤트] 체크 오류 (${guild.name}):`, error.message);
     }
   }
+  console.log(`[이벤트 체크] 체크 완료\n`);
 }
 
 // 이벤트 모니터링 시작

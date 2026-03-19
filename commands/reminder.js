@@ -82,9 +82,10 @@ async function executeSet(interaction, client) {
   );
   const timeFormatted = formatTime(delayMs);
 
-  await interaction.reply(
-    `⏰ **알림 설정 완료!**\n\n• ID: \`${id}\`\n• 시간: ${timeFormatted} 후\n• 메시지: ${reminderMessage}\n\nDM으로 알림을 보내드릴게요!\n\n⚠️ *서버 재시작 시 알림이 초기화될 수 있습니다.*`,
-  );
+  await interaction.reply({
+    content: `⏰ **알림 설정 완료!**\n\n• ID: \`${id}\`\n• 시간: ${timeFormatted} 후\n• 메시지: ${reminderMessage}\n\nDM으로 알림을 보내드릴게요!\n\n⚠️ *서버 재시작 시 알림이 초기화될 수 있습니다.*`,
+    ephemeral: true,
+  });
 }
 
 // 알림 목록 명령어 (슬래시)
@@ -107,9 +108,10 @@ async function executeList(interaction) {
     })
     .join("\n");
 
-  await interaction.reply(
-    `**설정된 알림 목록**\n\n${list}\n\n삭제: \`/알림삭제 ID\``,
-  );
+  await interaction.reply({
+    content: `**설정된 알림 목록**\n\n${list}\n\n삭제: \`/알림삭제 ID\``,
+    ephemeral: true,
+  });
 }
 
 // 알림 삭제 명령어 (슬래시)
@@ -137,7 +139,7 @@ async function executeDelete(interaction) {
   clearTimeout(userReminders[index].timeout);
   userReminders.splice(index, 1);
 
-  await interaction.reply(`✅ 알림 ID \`${id}\`가 삭제되었습니다.`);
+  await interaction.reply({ content: `✅ 알림 ID \`${id}\`가 삭제되었습니다.`, ephemeral: true });
 }
 
 module.exports = {
