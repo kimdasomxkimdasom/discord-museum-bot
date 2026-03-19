@@ -4,19 +4,10 @@
 const { setApiKey, fetchTimeEntries, createWeeklyReport, getThisWeekDates } = require('../services/redmine');
 
 async function execute(interaction) {
-  const apiKey = process.env.REDMINE_API_KEY;
+  const apiKey = interaction.options.getString('api키');
   const userId = interaction.options.getInteger('사용자id');
   const startDate = interaction.options.getString('시작일');
   const endDate = interaction.options.getString('종료일');
-
-  // API 키 확인
-  if (!apiKey) {
-    await interaction.reply({
-      content: '❌ REDMINE_API_KEY가 설정되지 않았습니다.\n.env 파일에 REDMINE_API_KEY를 추가해주세요.',
-      ephemeral: true,
-    });
-    return;
-  }
 
   // 날짜가 없으면 이번 주 월~금 사용
   const weekDates = getThisWeekDates();

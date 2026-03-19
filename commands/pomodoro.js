@@ -38,7 +38,7 @@ async function startPomodoro(interaction, client) {
     minutes
   });
 
-  await interaction.reply(`🍅 **뽀모도로 시작!**\n\n⏱️ ${minutes}분 집중 타이머가 시작되었어요.\n끝나면 DM으로 알려드릴게요!\n\n중지: \`/뽀모도로중지\``);
+  await interaction.reply({ content: `🍅 **뽀모도로 시작!**\n\n⏱️ ${minutes}분 집중 타이머가 시작되었어요.\n끝나면 DM으로 알려드릴게요!\n\n중지: \`/뽀모도로중지\``, ephemeral: true });
 }
 
 // 휴식 타이머
@@ -77,7 +77,7 @@ async function startBreak(interaction, client) {
   });
 
   const emoji = isLong ? '🛋️' : '☕';
-  await interaction.reply(`${emoji} **휴식 시작!**\n\n⏱️ ${minutes}분 휴식 타이머가 시작되었어요.\n끝나면 DM으로 알려드릴게요!`);
+  await interaction.reply({ content: `${emoji} **휴식 시작!**\n\n⏱️ ${minutes}분 휴식 타이머가 시작되었어요.\n끝나면 DM으로 알려드릴게요!`, ephemeral: true });
 }
 
 // 타이머 중지
@@ -94,7 +94,7 @@ async function stopPomodoro(interaction) {
   pomodoroTimers.delete(userId);
 
   const typeText = timer.type === 'work' ? '뽀모도로' : '휴식';
-  await interaction.reply(`⏹️ ${typeText} 타이머가 중지되었어요.`);
+  await interaction.reply({ content: `⏹️ ${typeText} 타이머가 중지되었어요.`, ephemeral: true });
 }
 
 // 타이머 상태 확인
