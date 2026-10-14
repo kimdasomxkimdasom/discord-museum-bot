@@ -5,7 +5,7 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 
-const BASE_URL = process.env.REDMINE_BASE_URL || 'https://pms.aend.co.kr';
+const BASE_URL = process.env.REDMINE_BASE_URL;
 
 // 현재 요청에 사용할 API 키 (요청마다 설정)
 let currentApiKey = null;
@@ -61,7 +61,7 @@ function setApiKey(apiKey) {
   currentApiKey = apiKey;
 }
 
-// 프로젝트명에서 앞의 "숫자." 제거 (예: "0.티스캐너 운영" → "티스캐너 운영")
+// 프로젝트명에서 앞의 "숫자." 제거
 function cleanProjectName(name) {
   return name.replace(/^\d+\./, '').trim();
 }
