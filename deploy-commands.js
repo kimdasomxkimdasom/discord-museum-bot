@@ -223,7 +223,7 @@ const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
     await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), {
       body: commands,
     });
-    console.log("✅ 글로벌 명령어 등록 완료! (반영까지 최대 1시간)");
+    console.log("글로벌 명령어 등록 완료! (반영까지 최대 1시간)");
 
     // 2. 서버 전용 명령어 등록 (즉시 반영, 테스트용)
     const testCommands = commands.map((cmd) => ({
@@ -238,14 +238,14 @@ const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
       ),
       { body: testCommands },
     );
-    console.log("✅ 서버 전용 명령어 등록 완료! (즉시 반영)");
+    console.log("서버 전용 명령어 등록 완료! (즉시 반영)");
 
     console.log(
       "\n등록된 명령어:",
       commands.map((c) => `/${c.name}`).join(", "),
     );
     console.log(
-      "\n💡 글로벌 반영 후 서버 전용 삭제: node delete-guild-commands.js",
+      "\n글로벌 반영 후 서버 전용 삭제: node delete-guild-commands.js",
     );
   } catch (error) {
     console.error("명령어 등록 오류:", error);
