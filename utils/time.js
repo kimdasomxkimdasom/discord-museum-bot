@@ -37,7 +37,30 @@ function formatTime(ms) {
   return parts.join(' ') || '0초';
 }
 
+// setTimeout 최대 지연값 (약 24.8일). 이보다 크면 Node가 1ms로 바꿔 즉시 실행된다
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+// 최대 지연값을 넘는 타이머를 나눠서 예약. clearLongTimeout으로 취소
+function setLongTimeout(callback, delayMs) {
+  const handle = { timer: null };
+  const schedule = (remaining) => {
+    if (remaining > MAX_TIMEOUT_MS) {
+      handle.timer = setTimeout(() => schedule(remaining - MAX_TIMEOUT_MS), MAX_TIMEOUT_MS);
+    } else {
+      handle.timer = setTimeout(callback, remaining);
+    }
+  };
+  schedule(delayMs);
+  return handle;
+}
+
+function clearLongTimeout(handle) {
+  if (handle) clearTimeout(handle.timer);
+}
+
 module.exports = {
   parseTime,
   formatTime,
+  setLongTimeout,
+  clearLongTimeout,
 };

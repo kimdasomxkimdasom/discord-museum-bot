@@ -7,13 +7,17 @@ const { URL } = require('url');
 
 const BASE_URL = process.env.REDMINE_BASE_URL;
 
-// 현재 요청에 사용할 API 키 (요청마다 설정)
-let currentApiKey = null;
+// 한 번에 가져올 최대 건수 (Redmine 최대값 100, 기본값 25)
+const PAGE_LIMIT = 100;
 
 // HTTP 요청 헬퍼 함수
-function request(url) {
+function request(url, apiKey) {
   return new Promise((resolve, reject) => {
-    if (!currentApiKey) {
+    if (!BASE_URL) {
+      reject(new Error('REDMINE_BASE_URL이 설정되지 않았습니다.'));
+      return;
+    }
+    if (!apiKey) {
       reject(new Error('API 키가 설정되지 않았습니다.'));
       return;
     }
@@ -27,7 +31,7 @@ function request(url) {
       path: parsedUrl.pathname + parsedUrl.search,
       method: 'GET',
       headers: {
-        'X-Redmine-API-Key': currentApiKey
+        'X-Redmine-API-Key': apiKey
       }
     };
 
@@ -36,7 +40,9 @@ function request(url) {
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         if (res.statusCode !== 200) {
-          reject(new Error(`Redmine API 오류 (${res.statusCode}): ${data}`));
+          const err = new Error(`Redmine API 오류 (${res.statusCode})`);
+          err.statusCode = res.statusCode;
+          reject(err);
           return;
         }
         try {
@@ -49,16 +55,18 @@ function request(url) {
 
     req.on('error', reject);
     req.setTimeout(30000, () => {
-      req.destroy();
-      reject(new Error('요청 시간 초과'));
+      req.destroy(new Error('요청 시간 초과'));
     });
     req.end();
   });
 }
 
-// API 키 설정
-function setApiKey(apiKey) {
-  currentApiKey = apiKey;
+function buildUrl(pathname, params = {}) {
+  const url = new URL(pathname, BASE_URL.endsWith('/') ? BASE_URL : `${BASE_URL}/`);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, String(value));
+  }
+  return url.toString();
 }
 
 // 프로젝트명에서 앞의 "숫자." 제거
@@ -66,20 +74,49 @@ function cleanProjectName(name) {
   return name.replace(/^\d+\./, '').trim();
 }
 
-// 시간 기록 데이터 조회
-async function fetchTimeEntries(userId, startDate, endDate) {
-  const url = `${BASE_URL}/time_entries.json?user_id=${userId}&from=${startDate}&to=${endDate}&sort=spent_on`;
-  return await request(url);
+// Textile 표 안에서 칸 구분자로 해석되지 않도록 | 이스케이프
+function escapeCell(text) {
+  return String(text ?? '').replace(/\|/g, '&#124;');
 }
 
-// 이슈 상세 정보 조회
-async function fetchIssueDetails(issueId) {
-  const url = `${BASE_URL}/issues/${issueId}.json`;
-  return await request(url);
+// 시간 기록 데이터 조회 (페이지네이션으로 전체 조회)
+async function fetchTimeEntries(apiKey, userId, startDate, endDate) {
+  const entries = [];
+  let offset = 0;
+
+  while (true) {
+    const url = buildUrl('time_entries.json', {
+      user_id: userId,
+      from: startDate,
+      to: endDate,
+      sort: 'spent_on',
+      limit: PAGE_LIMIT,
+      offset,
+    });
+    const page = await request(url, apiKey);
+    const items = page.time_entries || [];
+    entries.push(...items);
+    offset += items.length;
+
+    if (!items.length || offset >= (page.total_count ?? 0)) break;
+  }
+
+  return { time_entries: entries };
+}
+
+// 이슈 상세 정보 조회 (권한 없음/삭제된 일감이면 null)
+async function fetchIssueDetails(apiKey, issueId) {
+  try {
+    const url = buildUrl(`issues/${encodeURIComponent(issueId)}.json`);
+    return await request(url, apiKey);
+  } catch (error) {
+    if (error.statusCode === 403 || error.statusCode === 404) return null;
+    throw error;
+  }
 }
 
 // 주간 보고서 생성
-async function createWeeklyReport(timeEntries) {
+async function createWeeklyReport(apiKey, timeEntries) {
   const entries = timeEntries.time_entries || [];
 
   if (!entries.length) {
@@ -109,8 +146,8 @@ async function createWeeklyReport(timeEntries) {
     if (!issueData.has(key)) {
       if (hasIssue) {
         // 이슈 세부정보 조회
-        const issueDetails = await fetchIssueDetails(entry.issue.id);
-        const issue = issueDetails.issue || {};
+        const issueDetails = await fetchIssueDetails(apiKey, entry.issue.id);
+        const issue = issueDetails?.issue || {};
 
         issueData.set(key, {
           spentOn: [],
@@ -144,10 +181,15 @@ async function createWeeklyReport(timeEntries) {
 
   let workStatus = '● 업무 현황\n|_.업무일|_.업무명|_.업무내용|_.계획기간|_.진척도|_.비고|\n';
 
-  for (const [issueId, data] of issueData) {
+  for (const data of issueData.values()) {
     const minDate = data.spentOn.reduce((a, b) => a < b ? a : b);
     const maxDate = data.spentOn.reduce((a, b) => a > b ? a : b);
     const spentOnDisplay = minDate !== maxDate ? `${minDate} ~ ${maxDate}` : minDate;
+
+    // 계획기간: 일감의 시작일~완료기한, 없으면 업무일
+    const planDisplay = data.startIssueDate || data.endIssueDate
+      ? `${data.startIssueDate} ~ ${data.endIssueDate}`
+      : spentOnDisplay;
 
     const commentsText = data.comments.filter(c => c).join(' \n');
 
@@ -157,9 +199,9 @@ async function createWeeklyReport(timeEntries) {
       : commentsText;
 
     workStatus += `| ${spentOnDisplay}`;  // 업무일
-    workStatus += `| ${data.projectName} `;  // 업무명
-    workStatus += `| ${taskContent}`;  // 업무내용
-    workStatus += `| ${spentOnDisplay}`;  // 계획기간
+    workStatus += `| ${escapeCell(data.projectName)} `;  // 업무명
+    workStatus += `| ${escapeCell(taskContent)}`;  // 업무내용
+    workStatus += `| ${planDisplay}`;  // 계획기간
     workStatus += `| ${data.doneRatio}% `;  // 진척도
     workStatus += `|  |\n`;  // 비고
   }
@@ -191,19 +233,20 @@ async function createWeeklyReport(timeEntries) {
   return report;
 }
 
-// 이번 주 월~금 날짜 계산
+// 이번 주 월~금 날짜 계산 (서버 시간대와 무관하게 한국 시간 기준)
 function getThisWeekDates() {
-  const now = new Date();
-  const dayOfWeek = now.getDay(); // 0=일, 1=월, ..., 6=토
+  const KST_OFFSET = 9 * 60 * 60 * 1000;
+  const now = new Date(Date.now() + KST_OFFSET); // UTC 메서드로 읽으면 한국 날짜
+  const dayOfWeek = now.getUTCDay(); // 0=일, 1=월, ..., 6=토
 
   // 월요일 계산
   const monday = new Date(now);
   const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  monday.setDate(now.getDate() + diff);
+  monday.setUTCDate(now.getUTCDate() + diff);
 
   // 금요일 계산
   const friday = new Date(monday);
-  friday.setDate(monday.getDate() + 4);
+  friday.setUTCDate(monday.getUTCDate() + 4);
 
   const formatDate = (d) => d.toISOString().split('T')[0];
 
@@ -213,10 +256,17 @@ function getThisWeekDates() {
   };
 }
 
+// YYYY-MM-DD 형식이면서 실제 존재하는 날짜인지 확인
+function isValidDate(str) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
+  const d = new Date(`${str}T00:00:00Z`);
+  return !isNaN(d) && d.toISOString().startsWith(str);
+}
+
 module.exports = {
-  setApiKey,
   fetchTimeEntries,
   fetchIssueDetails,
   createWeeklyReport,
   getThisWeekDates,
+  isValidDate,
 };

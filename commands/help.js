@@ -35,7 +35,7 @@ async function execute(interaction) {
       {
         name: "📋 주간보고 작성",
         value:
-          "`/주간보고 API키 사용자ID` - Redmine 주간보고 생성\n• API키: Redmine 개인 API 키\n• 시작일/종료일 생략 시 이번 주 월~금 자동 적용\n• 사용자ID: 프로필 URL에서 확인 (`users/123` → `123`)",
+          "`/주간보고 [시작일] [종료일]` - 본인의 Redmine 주간보고 생성\n• 날짜 형식: `YYYY-MM-DD`\n• 시작일/종료일 생략 시 이번 주 월~금 자동 적용\n• Redmine 계정 연결은 관리자에게 요청해주세요",
         inline: false,
       },
       {

@@ -32,7 +32,11 @@ const commands = [
     .setName("알림삭제")
     .setDescription("설정된 알림을 삭제합니다")
     .addIntegerOption((option) =>
-      option.setName("id").setDescription("삭제할 알림 ID").setRequired(true),
+      option
+        .setName("id")
+        .setDescription("삭제할 알림 ID")
+        .setMinValue(1)
+        .setRequired(true),
     ),
 
   new SlashCommandBuilder()
@@ -51,19 +55,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("주간보고")
-    .setDescription("Redmine 시간 기록을 기반으로 주간보고를 생성합니다")
-    .addStringOption((option) =>
-      option
-        .setName("api키")
-        .setDescription("Redmine API 키")
-        .setRequired(true),
-    )
-    .addIntegerOption((option) =>
-      option
-        .setName("사용자id")
-        .setDescription("Redmine 사용자 ID")
-        .setRequired(true),
-    )
+    .setDescription("Redmine 시간 기록을 기반으로 본인의 주간보고를 생성합니다")
     .addStringOption((option) =>
       option
         .setName("시작일")
@@ -84,6 +76,8 @@ const commands = [
       option
         .setName("시간")
         .setDescription("집중 시간 (분, 기본: 25분)")
+        .setMinValue(1)
+        .setMaxValue(180)
         .setRequired(false),
     ),
 
@@ -143,6 +137,7 @@ const commands = [
       option
         .setName("인원")
         .setDescription("뽑을 인원 수 (기본: 1명)")
+        .setMinValue(1)
         .setRequired(false),
     ),
 
@@ -150,19 +145,39 @@ const commands = [
     .setName("점심투표")
     .setDescription("점심 메뉴 투표를 시작합니다")
     .addStringOption((option) =>
-      option.setName("메뉴1").setDescription("메뉴 1").setRequired(true),
+      option
+        .setName("메뉴1")
+        .setDescription("메뉴 1")
+        .setMaxLength(80)
+        .setRequired(true),
     )
     .addStringOption((option) =>
-      option.setName("메뉴2").setDescription("메뉴 2").setRequired(true),
+      option
+        .setName("메뉴2")
+        .setDescription("메뉴 2")
+        .setMaxLength(80)
+        .setRequired(true),
     )
     .addStringOption((option) =>
-      option.setName("메뉴3").setDescription("메뉴 3").setRequired(false),
+      option
+        .setName("메뉴3")
+        .setDescription("메뉴 3")
+        .setMaxLength(80)
+        .setRequired(false),
     )
     .addStringOption((option) =>
-      option.setName("메뉴4").setDescription("메뉴 4").setRequired(false),
+      option
+        .setName("메뉴4")
+        .setDescription("메뉴 4")
+        .setMaxLength(80)
+        .setRequired(false),
     )
     .addStringOption((option) =>
-      option.setName("메뉴5").setDescription("메뉴 5").setRequired(false),
+      option
+        .setName("메뉴5")
+        .setDescription("메뉴 5")
+        .setMaxLength(80)
+        .setRequired(false),
     ),
 
   new SlashCommandBuilder()
@@ -186,12 +201,14 @@ const commands = [
       option
         .setName("총액")
         .setDescription("나눌 총 금액 (원)")
+        .setMinValue(1)
         .setRequired(true),
     )
     .addIntegerOption((option) =>
       option
         .setName("인원")
         .setDescription("나눌 인원 수")
+        .setMinValue(1)
         .setRequired(true),
     ),
 
@@ -207,7 +224,7 @@ const commands = [
     .addStringOption((option) =>
       option
         .setName("결과")
-        .setDescription("결과 목록 (쉼표 구분, 미입력시 당첨1+꽝)")
+        .setDescription("결과 목록 (쉼표 또는 공백 구분, 미입력시 당첨1+꽝)")
         .setRequired(false),
     ),
 ].map((command) => command.toJSON());
@@ -225,28 +242,32 @@ const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
     });
     console.log("글로벌 명령어 등록 완료! (반영까지 최대 1시간)");
 
-    // 2. 서버 전용 명령어 등록 (즉시 반영, 테스트용)
-    const testCommands = commands.map((cmd) => ({
-      ...cmd,
-      description: `(테스트) ${cmd.description}`,
-    }));
+    // 2. 서버 전용 명령어 등록 (즉시 반영, 테스트용 - GUILD_ID가 있을 때만)
+    if (process.env.GUILD_ID) {
+      const testCommands = commands.map((cmd) => ({
+        ...cmd,
+        description: `(테스트) ${cmd.description}`,
+      }));
 
-    await rest.put(
-      Routes.applicationGuildCommands(
-        process.env.CLIENT_ID,
-        process.env.GUILD_ID,
-      ),
-      { body: testCommands },
-    );
-    console.log("서버 전용 명령어 등록 완료! (즉시 반영)");
+      await rest.put(
+        Routes.applicationGuildCommands(
+          process.env.CLIENT_ID,
+          process.env.GUILD_ID,
+        ),
+        { body: testCommands },
+      );
+      console.log("서버 전용 명령어 등록 완료! (즉시 반영)");
+    }
 
     console.log(
       "\n등록된 명령어:",
       commands.map((c) => `/${c.name}`).join(", "),
     );
-    console.log(
-      "\n글로벌 반영 후 서버 전용 삭제: node delete-guild-commands.js",
-    );
+    if (process.env.GUILD_ID) {
+      console.log(
+        "\n글로벌 반영 후 서버 전용 삭제: node delete-guild-commands.js",
+      );
+    }
   } catch (error) {
     console.error("명령어 등록 오류:", error);
   }

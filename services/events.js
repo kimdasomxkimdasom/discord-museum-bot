@@ -1,4 +1,5 @@
 const config = require('../config');
+const { isAllowedGuild } = require('../utils/access');
 
 // 이벤트 알림 저장소 (이벤트ID_알림타입 형태로 저장)
 const notifiedEvents = new Set();
@@ -17,20 +18,18 @@ function getKoreanTime() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
 }
 
-// 현재 시간이 아침 알림 시간대인지 확인 (설정된 시간 ~ +10분)
+// 현재 시간이 아침 알림 시간대인지 확인 (설정된 시각의 1시간 동안)
+// 체크 주기만큼의 짧은 구간으로 잡으면 타이머가 밀릴 때 알림을 놓칠 수 있어 넉넉하게 잡고,
+// 중복 발송은 notifiedEvents로 막는다
 function isMorningNotifyTime() {
   const now = getKoreanTime();
-  const hour = now.getHours();
-  const minutes = now.getMinutes();
-  const targetHour = config.events.morningNotifyHour;
-
-  return hour === targetHour && minutes < 10;
+  return now.getHours() === config.events.morningNotifyHour;
 }
 
 // 알림 메시지 전송
 async function sendEventNotification(event, guild, subscribers, notifyType, minutesLeft) {
   const startTime = new Date(event.scheduledStartTimestamp);
-  const timeStr = startTime.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+  const timeStr = startTime.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' });
 
   let message;
   if (notifyType === 'morning') {
@@ -66,6 +65,8 @@ async function checkScheduledEvents(client) {
   console.log(`[이벤트 체크] ${koreanNow.toLocaleString('ko-KR')} - 체크 시작`);
 
   for (const guild of client.guilds.cache.values()) {
+    if (!isAllowedGuild(guild.id)) continue;
+
     try {
       const events = await guild.scheduledEvents.fetch();
       console.log(`[이벤트 체크] 서버: ${guild.name} - 예정된 이벤트 ${events.size}개`);
@@ -80,7 +81,7 @@ async function checkScheduledEvents(client) {
 
         // 이미 지난 이벤트는 스킵
         if (timeUntilStart <= 0) {
-          console.log(`[이벤트 체크]   - "${event.name}" (${eventStartStr}) → 이미 지남, 스킵`);
+          console.log(`[이벤트 체크]   - "${event.name}" (${eventStartStr}) -> 이미 지남, 스킵`);
           continue;
         }
 
@@ -96,7 +97,7 @@ async function checkScheduledEvents(client) {
         if (isTodayEvent && isMorning && !notifiedEvents.has(morningKey)) {
           try {
             const subscribers = await event.fetchSubscribers();
-            console.log(`[이벤트 체크]     → 아침 알림 발송! 구독자: ${subscribers.size}명`);
+            console.log(`[이벤트 체크]     -> 아침 알림 발송! 구독자: ${subscribers.size}명`);
             if (subscribers.size > 0) {
               await sendEventNotification(event, guild, subscribers, 'morning', 0);
             }
@@ -116,7 +117,7 @@ async function checkScheduledEvents(client) {
         if (isWithinNotifyWindow && !notifiedEvents.has(beforeKey)) {
           try {
             const subscribers = await event.fetchSubscribers();
-            console.log(`[이벤트 체크]     → ${minutesUntil}분 전 알림 발송! 구독자: ${subscribers.size}명`);
+            console.log(`[이벤트 체크]     -> ${minutesUntil}분 전 알림 발송! 구독자: ${subscribers.size}명`);
             if (subscribers.size > 0) {
               await sendEventNotification(event, guild, subscribers, 'before', minutesUntil);
             }

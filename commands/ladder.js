@@ -5,6 +5,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  MessageFlags,
 } = require("discord.js");
 
 // 채널별 게임 데이터
@@ -12,6 +13,8 @@ const activeGames = new Map();
 
 const BRIDGE = "──────";
 const EMPTY = "      ";
+// 결과 공개를 누르지 않고 방치된 게임은 이 시간이 지나면 새 게임으로 대체 가능
+const GAME_TTL = 30 * 60 * 1000;
 const ANIMALS = ["🐶", "🐱", "🐰", "🐻", "🐼", "🦊", "🐨", "🐯"];
 
 // ===== 사다리 생성 =====
@@ -231,12 +234,16 @@ function buildFrameEmbed(data, ladderStr, pIndex, revealedResults) {
 // ===== 명령어 실행 =====
 
 async function execute(interaction) {
-  const channelId = interaction.channel.id;
+  const channelId = interaction.channelId;
 
-  if (activeGames.has(channelId)) {
+  const existing = activeGames.get(channelId);
+  if (
+    existing &&
+    (existing.revealing || Date.now() - existing.createdAt < GAME_TTL)
+  ) {
     await interaction.reply({
       content: "이미 진행 중인 사다리타기가 있습니다!",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -252,7 +259,7 @@ async function execute(interaction) {
   if (participants.length < 2) {
     await interaction.reply({
       content: "⚠️ 참가자를 2명 이상 입력해주세요!",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -260,7 +267,7 @@ async function execute(interaction) {
   if (participants.length > 8) {
     await interaction.reply({
       content: "⚠️ 참가자는 최대 8명까지 가능합니다!",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -268,13 +275,13 @@ async function execute(interaction) {
   let results;
   if (resultsInput) {
     results = resultsInput
-      .split(/\s+/)
+      .split(/[,\s]+/)
       .map((r) => r.trim())
       .filter((r) => r.length > 0);
     if (results.length !== participants.length) {
       await interaction.reply({
         content: `⚠️ 결과 수(${results.length})와 참가자 수(${participants.length})가 일치해야 합니다!`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -297,6 +304,8 @@ async function execute(interaction) {
     results,
     bridges,
     creatorId: interaction.user.id,
+    createdAt: Date.now(),
+    revealing: false,
   };
   const embed = buildStaticEmbed(data, false);
   const row = new ActionRowBuilder().addComponents(
@@ -306,30 +315,49 @@ async function execute(interaction) {
       .setStyle(ButtonStyle.Success),
   );
 
-  const reply = await interaction.reply({
+  const response = await interaction.reply({
     embeds: [embed],
     components: [row],
-    fetchReply: true,
+    withResponse: true,
   });
 
-  data.messageId = reply.id;
+  data.messageId = response.resource.message.id;
   activeGames.set(channelId, data);
 }
 
 // ===== 버튼 처리 (한 마리씩 + 가로 이동 애니메이션) =====
 
 async function handleButton(interaction) {
-  const channelId = interaction.channel.id;
+  const channelId = interaction.channelId;
   const data = activeGames.get(channelId);
 
-  if (!data) {
+  // 이 메시지의 게임이 아니면 (만료되었거나 새 게임으로 대체됨)
+  if (!data || data.messageId !== interaction.message.id) {
     await interaction.reply({
       content: "진행 중인 사다리타기가 없습니다.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
+  // 동시에 여러 명이 눌러도 한 번만 공개
+  if (data.revealing) {
+    await interaction.reply({
+      content: "이미 결과를 공개하는 중입니다!",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  data.revealing = true;
+
+  try {
+    await revealResults(interaction, data);
+  } finally {
+    activeGames.delete(channelId);
+  }
+}
+
+async function revealResults(interaction, data) {
   const disabledRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("ladder_reveal")
@@ -413,7 +441,6 @@ async function handleButton(interaction) {
     embeds: [finalEmbed],
     components: [finalRow],
   });
-  activeGames.delete(channelId);
 }
 
 module.exports = {

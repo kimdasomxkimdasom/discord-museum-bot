@@ -5,11 +5,15 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  MessageFlags,
 } = require("discord.js");
 
 // 채널별 투표 데이터 저장 (channelId -> { menus, votes, creatorId, messageId })
 // votes: Map<menuIndex, Set<userId>>
 const activeVotes = new Map();
+
+// 마감하지 않고 방치된 투표는 이 시간이 지나면 새 투표로 대체 가능
+const VOTE_TTL = 6 * 60 * 60 * 1000;
 
 // 투표 임베드 생성
 function buildVoteEmbed(data, closed = false) {
@@ -75,14 +79,15 @@ function buildButtons(menus, disabled = false) {
 
 // /점심투표 실행
 async function execute(interaction) {
-  const channelId = interaction.channel.id;
+  const channelId = interaction.channelId;
 
   // 이미 진행 중인 투표가 있는지 확인
-  if (activeVotes.has(channelId)) {
+  const existing = activeVotes.get(channelId);
+  if (existing && Date.now() - existing.createdAt < VOTE_TTL) {
     await interaction.reply({
       content:
         "이미 진행 중인 투표가 있습니다! `/점심마감`으로 먼저 마감해주세요.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -97,7 +102,7 @@ async function execute(interaction) {
   if (menus.length < 2) {
     await interaction.reply({
       content: "최소 2개 이상의 메뉴를 입력해주세요.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -110,6 +115,7 @@ async function execute(interaction) {
     menus,
     votes,
     creatorId: interaction.user.id,
+    createdAt: Date.now(),
   };
 
   const embed = buildVoteEmbed(data);
@@ -119,22 +125,23 @@ async function execute(interaction) {
     content: `📢 **${interaction.user.displayName}**님이 점심 투표를 시작했습니다! 버튼을 눌러 투표하세요. (다시 누르면 취소)`,
     embeds: [embed],
     components: [row],
-    fetchReply: true,
+    withResponse: true,
   });
 
-  data.messageId = reply.id;
+  data.messageId = reply.resource.message.id;
   activeVotes.set(channelId, data);
 }
 
 // 버튼 클릭 처리
 async function handleButton(interaction) {
-  const channelId = interaction.channel.id;
+  const channelId = interaction.channelId;
   const data = activeVotes.get(channelId);
 
-  if (!data) {
+  // 이 메시지의 투표가 아니면 (마감되었거나 새 투표로 대체됨)
+  if (!data || data.messageId !== interaction.message.id) {
     await interaction.reply({
       content: "진행 중인 투표가 없습니다.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -143,12 +150,15 @@ async function handleButton(interaction) {
   const userId = interaction.user.id;
   const voterSet = data.votes.get(menuIndex);
 
-  if (!voterSet) return;
+  if (!voterSet) {
+    await interaction.deferUpdate();
+    return;
+  }
 
   // 다른 메뉴에 이미 투표했으면 해제
   let action;
   if (voterSet.has(userId)) {
-    // 같은 메뉴 다시 클릭 → 취소
+    // 같은 메뉴 다시 클릭 -> 취소
     voterSet.delete(userId);
     action = "cancel";
   } else {
@@ -172,13 +182,13 @@ async function handleButton(interaction) {
 
 // /점심마감 실행
 async function executeClose(interaction) {
-  const channelId = interaction.channel.id;
+  const channelId = interaction.channelId;
   const data = activeVotes.get(channelId);
 
   if (!data) {
     await interaction.reply({
       content: "진행 중인 투표가 없습니다.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -195,6 +205,11 @@ async function executeClose(interaction) {
 
   // 투표 데이터 삭제
   activeVotes.delete(channelId);
+
+  // 원래 투표 메시지의 버튼도 비활성화
+  await interaction.channel?.messages
+    .edit(data.messageId, { components: [row] })
+    .catch(() => {});
 }
 
 module.exports = {

@@ -1,5 +1,11 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits, Partials } = require("discord.js");
+const {
+  Client,
+  Events,
+  GatewayIntentBits,
+  Partials,
+  MessageFlags,
+} = require("discord.js");
 
 // 설정
 const config = require("./config");
@@ -11,6 +17,7 @@ const { startEventMonitoring } = require("./services/events");
 // 명령어
 const commands = require("./commands");
 const { getErrorMessage } = require("./utils/error");
+const { isAllowedGuild, isAllowedUser } = require("./utils/access");
 
 // Discord 클라이언트 설정
 const client = new Client({
@@ -23,10 +30,20 @@ const client = new Client({
     GatewayIntentBits.GuildScheduledEvents,
   ],
   partials: [Partials.Channel],
+  // 봇이 보내는 메시지로 @everyone/@here/역할 멘션이 울리지 않도록 차단
+  allowedMentions: { parse: ["users"], repliedUser: true },
 });
+
+// ===== Claude 대화 =====
+
+const SYSTEM_PROMPT =
+  "당신은 친절하고 도움이 되는 Discord 봇입니다. 한국어로 대화할 때는 한국어로, 영어로 대화할 때는 영어로 답변합니다. 답변은 Discord에서 읽기 좋게 간결하게 작성합니다.";
 
 // 대화 히스토리 저장 (채널별: { messages: [], lastUsed: timestamp })
 const conversationHistory = new Map();
+
+// 응답 생성 중인 채널 (같은 채널 동시 요청으로 히스토리 순서가 꼬이는 것 방지)
+const busyChannels = new Set();
 
 // 오래된 대화 히스토리 정리 (1시간마다 실행, 30분 이상 미사용 채널 삭제)
 const CLEANUP_INTERVAL = 60 * 60 * 1000; // 1시간
@@ -34,11 +51,9 @@ const MAX_IDLE_TIME = 30 * 60 * 1000; // 30분
 
 function cleanupConversationHistory() {
   const now = Date.now();
-  let cleaned = 0;
   for (const [channelId, data] of conversationHistory.entries()) {
     if (now - data.lastUsed > MAX_IDLE_TIME) {
       conversationHistory.delete(channelId);
-      cleaned++;
     }
   }
 }
@@ -53,8 +68,46 @@ function getHistory(channelId) {
   return data.messages;
 }
 
-// 봇이 준비되면 실행
-client.once("ready", () => {
+// 히스토리에 질문을 추가하고 Claude 응답을 받아 히스토리에 저장
+async function askClaude(channelId, speaker, text) {
+  const history = getHistory(channelId);
+
+  history.push({ role: "user", speaker, content: text });
+  while (history.length > config.conversation.maxHistory) {
+    history.shift();
+  }
+
+  const conversationText = history
+    .map((msg) => {
+      const role = msg.role === "user" ? `사용자(${msg.speaker})` : "봇";
+      return `${role}: ${msg.content}`;
+    })
+    .join("\n\n");
+
+  const prompt = `이전 대화:\n${conversationText}\n\n위 대화의 마지막 사용자 메시지에 답변해주세요.`;
+
+  let reply;
+  try {
+    reply = await callClaude(prompt, SYSTEM_PROMPT);
+  } catch (error) {
+    // 실패한 질문은 히스토리에서 제거
+    const index = history.findLastIndex((msg) => msg.content === text);
+    if (index !== -1) history.splice(index, 1);
+    throw error;
+  }
+
+  history.push({ role: "assistant", content: reply });
+  return reply || "(응답이 비어 있습니다)";
+}
+
+// Discord 메시지 길이 제한(2000자)에 맞춰 분할
+function splitMessage(text, size = 2000) {
+  return text.match(new RegExp(`[\\s\\S]{1,${size}}`, "g")) || [""];
+}
+
+// ===== 봇 준비 =====
+
+client.once(Events.ClientReady, () => {
   console.log(`봇이 ${client.user.tag}로 로그인했습니다!`);
 
   // 이벤트 알림 모니터링 시작
@@ -64,268 +117,197 @@ client.once("ready", () => {
   setInterval(cleanupConversationHistory, CLEANUP_INTERVAL);
 });
 
-// ===== 슬래시 명령어 처리 =====
-client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
+// ===== 슬래시 명령어 =====
 
-  const { commandName } = interaction;
-
-  try {
-    // 도움말
-    if (commandName === "도움말" || commandName === "help") {
-      await commands.help.execute(interaction);
-      return;
-    }
-
-    // 질문
-    if (commandName === "질문") {
-      const message = interaction.options.getString("메시지");
-      await interaction.deferReply();
-
-      const channelId = interaction.channel.id;
-      const history = getHistory(channelId);
-
-      history.push({ role: "user", content: message });
-      while (history.length > config.conversation.maxHistory) {
-        history.shift();
-      }
-
-      const conversationText = history
-        .map((msg) => {
-          const role = msg.role === "user" ? "사용자" : "봇";
-          return `${role}: ${msg.content}`;
-        })
-        .join("\n\n");
-
-      const systemPrompt =
-        "당신은 친절하고 도움이 되는 Discord 봇입니다. 한국어로 대화할 때는 한국어로, 영어로 대화할 때는 영어로 답변합니다. 답변은 Discord에서 읽기 좋게 간결하게 작성합니다.";
-      const prompt = `이전 대화:\n${conversationText}\n\n위 대화의 마지막 사용자 메시지에 답변해주세요.`;
-
-      const reply = await callClaude(prompt, systemPrompt);
-      history.push({ role: "assistant", content: reply });
-
-      if (reply.length > 2000) {
-        const chunks = reply.match(/[\s\S]{1,2000}/g);
-        await interaction.editReply(chunks[0]);
-        for (let i = 1; i < chunks.length; i++) {
-          await interaction.followUp(chunks[i]);
-        }
-      } else {
-        await interaction.editReply(reply);
-      }
-      return;
-    }
-
-    // 대화 초기화
-    if (commandName === "초기화") {
-      conversationHistory.delete(interaction.channel.id);
-      await interaction.reply("대화 히스토리가 초기화되었습니다.");
-      return;
-    }
-
-    // 알림 설정
-    if (commandName === "알림") {
-      await commands.reminder.executeSet(interaction, client);
-      return;
-    }
-
-    // 알림 목록
-    if (commandName === "알림목록") {
-      await commands.reminder.executeList(interaction);
-      return;
-    }
-
-    // 알림 삭제
-    if (commandName === "알림삭제") {
-      await commands.reminder.executeDelete(interaction);
-      return;
-    }
-
-    // 주간보고
-    if (commandName === "주간보고") {
-      await commands.weeklyReport.execute(interaction);
-      return;
-    }
-
-    // 뽀모도로
-    if (commandName === "뽀모도로") {
-      await commands.pomodoro.startPomodoro(interaction, client);
-      return;
-    }
-
-    // 휴식
-    if (commandName === "휴식") {
-      await commands.pomodoro.startBreak(interaction, client);
-      return;
-    }
-
-    // 뽀모도로 중지
-    if (commandName === "뽀모도로중지") {
-      await commands.pomodoro.stopPomodoro(interaction);
-      return;
-    }
-
-    // 타이머 상태
-    if (commandName === "타이머상태") {
-      await commands.pomodoro.checkStatus(interaction);
-      return;
-    }
-
-    // 익명 메시지
-    if (commandName === "익명") {
-      await commands.anonymous.execute(interaction);
-      return;
-    }
-
-    // 익명 전체 메시지
-    if (commandName === "익명전체") {
-      await commands.anonymous.executeAll(interaction);
-      return;
-    }
-
-    // 뽑기
-    if (commandName === "뽑기") {
-      await commands.pick.execute(interaction);
-      return;
-    }
-
-    // 사다리타기
-    if (commandName === "사다리타기") {
-      await commands.ladder.execute(interaction);
-      return;
-    }
-
-    // 계산기
-    if (commandName === "계산기") {
-      await commands.calculator.execute(interaction);
-      return;
-    }
-
-    // N빵
-    if (commandName === "n빵") {
-      await commands.split.execute(interaction);
-      return;
-    }
-
-    // 점심 투표
-    if (commandName === "점심투표") {
-      await commands.lunchVote.execute(interaction);
-      return;
-    }
-
-    // 점심 마감
-    if (commandName === "점심마감") {
-      await commands.lunchVote.executeClose(interaction);
-      return;
-    }
-  } catch (error) {
-    console.error("슬래시 명령어 오류:", error);
-    const errMsg = getErrorMessage(error);
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(errMsg);
-    } else {
-      await interaction.reply({ content: errMsg, ephemeral: true });
-    }
+async function handleAsk(interaction) {
+  const channelId = interaction.channelId;
+  if (busyChannels.has(channelId)) {
+    await interaction.reply({
+      content: "⏳ 이 채널의 이전 질문에 답변 중입니다. 잠시 후 다시 시도해주세요.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
   }
-});
 
-// ===== 버튼 인터랙션 처리 =====
-client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isButton()) return;
-
+  busyChannels.add(channelId);
   try {
-    if (interaction.customId.startsWith("lunch_vote_")) {
-      await commands.lunchVote.handleButton(interaction);
+    const message = interaction.options.getString("메시지");
+    await interaction.deferReply();
+
+    const reply = await askClaude(channelId, interaction.user.displayName, message);
+    const chunks = splitMessage(reply);
+    await interaction.editReply(chunks[0]);
+    for (let i = 1; i < chunks.length; i++) {
+      await interaction.followUp(chunks[i]);
     }
-    if (interaction.customId === "ladder_reveal") {
-      await commands.ladder.handleButton(interaction);
+  } finally {
+    busyChannels.delete(channelId);
+  }
+}
+
+async function handleReset(interaction) {
+  conversationHistory.delete(interaction.channelId);
+  await interaction.reply("대화 히스토리가 초기화되었습니다.");
+}
+
+// 서버에서만 사용 가능한 명령어
+function guildOnly(handler) {
+  return async (interaction) => {
+    if (!interaction.inGuild()) {
+      await interaction.reply({
+        content: "이 명령어는 서버에서만 사용할 수 있습니다.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    await handler(interaction);
+  };
+}
+
+const slashHandlers = {
+  도움말: (i) => commands.help.execute(i),
+  help: (i) => commands.help.execute(i),
+  질문: handleAsk,
+  초기화: handleReset,
+  알림: (i) => commands.reminder.executeSet(i, client),
+  알림목록: (i) => commands.reminder.executeList(i),
+  알림삭제: (i) => commands.reminder.executeDelete(i),
+  주간보고: (i) => commands.weeklyReport.execute(i),
+  뽀모도로: (i) => commands.pomodoro.startPomodoro(i, client),
+  휴식: (i) => commands.pomodoro.startBreak(i, client),
+  뽀모도로중지: (i) => commands.pomodoro.stopPomodoro(i),
+  타이머상태: (i) => commands.pomodoro.checkStatus(i),
+  익명: guildOnly((i) => commands.anonymous.execute(i)),
+  익명전체: guildOnly((i) => commands.anonymous.executeAll(i)),
+  뽑기: (i) => commands.pick.execute(i),
+  사다리타기: (i) => commands.ladder.execute(i),
+  계산기: (i) => commands.calculator.execute(i),
+  n빵: (i) => commands.split.execute(i),
+  점심투표: (i) => commands.lunchVote.execute(i),
+  점심마감: (i) => commands.lunchVote.executeClose(i),
+};
+
+const buttonHandlers = [
+  [(id) => id.startsWith("lunch_vote_"), (i) => commands.lunchVote.handleButton(i)],
+  [(id) => id === "ladder_reveal", (i) => commands.ladder.handleButton(i)],
+];
+
+// 인터랙션에 에러 메시지 응답 (응답 실패는 로그만 남김)
+async function replyError(interaction, content) {
+  try {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
+    } else {
+      await interaction.reply({ content, flags: MessageFlags.Ephemeral });
     }
   } catch (error) {
-    console.error("버튼 인터랙션 오류:", error);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({
-        content: "처리 중 오류가 발생했습니다.",
-        ephemeral: true,
-      });
+    console.error("에러 응답 실패:", error.message);
+  }
+}
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand() && !interaction.isButton()) return;
+
+  // 허용된 서버/사용자인지 확인 (버튼 포함)
+  if (!isAllowedGuild(interaction.guildId)) {
+    await replyError(interaction, "이 서버에서는 사용할 수 없는 봇입니다.");
+    return;
+  }
+  if (!isAllowedUser(interaction.user.id)) {
+    await replyError(interaction, "사용 권한이 없습니다. 관리자에게 문의하세요.");
+    return;
+  }
+
+  try {
+    if (interaction.isChatInputCommand()) {
+      const handler = slashHandlers[interaction.commandName];
+      if (handler) await handler(interaction);
+      return;
     }
+
+    const entry = buttonHandlers.find(([match]) => match(interaction.customId));
+    if (entry) await entry[1](interaction);
+  } catch (error) {
+    console.error("인터랙션 처리 오류:", error);
+    const errMsg = interaction.isChatInputCommand()
+      ? getErrorMessage(error)
+      : "처리 중 오류가 발생했습니다.";
+    await replyError(interaction, errMsg);
   }
 });
 
 // ===== 메시지 처리 (멘션 대화) =====
-client.on("messageCreate", async (message) => {
+
+client.on(Events.MessageCreate, async (message) => {
   // 봇 메시지 무시
   if (message.author.bot) return;
 
-  // ===== 멘션 대화 처리 =====
-  const isMentioned = message.mentions.has(client.user);
+  // 허용된 서버/사용자만
+  if (!isAllowedGuild(message.guildId) || !isAllowedUser(message.author.id)) return;
+
+  // 직접 멘션 또는 DM일 때만 응답 (@everyone, 역할 멘션은 무시)
+  const isMentioned = message.mentions.has(client.user, {
+    ignoreEveryone: true,
+    ignoreRoles: true,
+  });
   const isDM = !message.guild;
 
   if (!isMentioned && !isDM) return;
 
-  // 멘션 제거하고 내용만 추출
-  const textContent = message.content.replace(/<@!?\d+>/g, "").trim();
-
-  // 텍스트가 없으면
-  if (!textContent) {
-    await message.reply(
-      "무엇을 도와드릴까요? `/도움말`로 명령어를 확인하세요.",
-    );
-    return;
-  }
-
-  // 타이핑 표시
-  await message.channel.sendTyping();
+  const channelId = message.channelId;
 
   try {
-    // 채널별 대화 히스토리 가져오기
-    const channelId = message.channel.id;
-    const history = getHistory(channelId);
+    // 봇 멘션만 제거하고 내용 추출
+    const textContent = message.content
+      .replace(new RegExp(`<@!?${client.user.id}>`, "g"), "")
+      .trim();
 
-    // 새 메시지 추가
-    history.push({
-      role: "user",
-      content: textContent,
-    });
-
-    // 히스토리가 너무 길면 오래된 메시지 제거
-    while (history.length > config.conversation.maxHistory) {
-      history.shift();
+    // 텍스트가 없으면
+    if (!textContent) {
+      await message.reply(
+        "무엇을 도와드릴까요? `/도움말`로 명령어를 확인하세요.",
+      );
+      return;
     }
 
-    // 히스토리를 텍스트로 변환
-    const conversationText = history
-      .map((msg) => {
-        const role = msg.role === "user" ? "사용자" : "봇";
-        return `${role}: ${msg.content}`;
-      })
-      .join("\n\n");
+    if (busyChannels.has(channelId)) {
+      await message.reply("⏳ 이전 질문에 답변 중입니다. 잠시 후 다시 시도해주세요.");
+      return;
+    }
 
-    const systemPrompt =
-      "당신은 친절하고 도움이 되는 Discord 봇입니다. 한국어로 대화할 때는 한국어로, 영어로 대화할 때는 영어로 답변합니다. 답변은 Discord에서 읽기 좋게 간결하게 작성합니다.";
-    const prompt = `이전 대화:\n${conversationText}\n\n위 대화의 마지막 사용자 메시지에 답변해주세요.`;
+    busyChannels.add(channelId);
+    try {
+      // 타이핑 표시 (실패해도 무시)
+      message.channel.sendTyping().catch(() => {});
 
-    // Claude CLI 호출
-    const reply = await callClaude(prompt, systemPrompt);
+      const reply = await askClaude(
+        channelId,
+        message.member?.displayName || message.author.displayName,
+        textContent,
+      );
 
-    // 응답을 히스토리에 추가
-    history.push({
-      role: "assistant",
-      content: reply,
-    });
-
-    // Discord 메시지 길이 제한 (2000자)
-    if (reply.length > 2000) {
-      const chunks = reply.match(/[\s\S]{1,2000}/g);
-      for (const chunk of chunks) {
+      for (const chunk of splitMessage(reply)) {
         await message.reply(chunk);
       }
-    } else {
-      await message.reply(reply);
+    } finally {
+      busyChannels.delete(channelId);
     }
   } catch (error) {
     console.error("에러 발생:", error);
-    await message.reply(getErrorMessage(error));
+    await message.reply(getErrorMessage(error)).catch((e) => {
+      console.error("에러 응답 실패:", e.message);
+    });
   }
+});
+
+// ===== 전역 에러 처리 (프로세스가 죽지 않도록) =====
+
+client.on(Events.Error, (error) => {
+  console.error("Discord 클라이언트 오류:", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("처리되지 않은 Promise 거부:", reason);
 });
 
 // 봇 로그인

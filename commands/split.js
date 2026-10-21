@@ -1,3 +1,5 @@
+const { MessageFlags } = require("discord.js");
+
 function formatNumber(num) {
   return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
@@ -9,7 +11,7 @@ async function execute(interaction) {
   if (total <= 0) {
     await interaction.reply({
       content: "❌ 총액은 0보다 커야 합니다.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -17,7 +19,7 @@ async function execute(interaction) {
   if (people <= 0) {
     await interaction.reply({
       content: "❌ 인원은 0보다 커야 합니다.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }

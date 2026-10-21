@@ -1,7 +1,4 @@
 module.exports = {
-  // 봇 설정
-  prefix: '!',
-
   // Claude CLI 설정
   claude: {
     timeout: 120000, // 2분

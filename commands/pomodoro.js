@@ -1,19 +1,31 @@
 // commands/pomodoro.js
 // 뽀모도로 타이머 기능
+const { MessageFlags } = require("discord.js");
 
 // 사용자별 타이머 저장
 const pomodoroTimers = new Map();
 
+// 집중 시간 최대값 (분)
+const MAX_MINUTES = 180;
+
 // 타이머 시작
 async function startPomodoro(interaction, client) {
   const userId = interaction.user.id;
-  const minutes = interaction.options.getInteger('시간') || 25;
+  const minutes = interaction.options.getInteger('시간') ?? 25;
+
+  if (minutes < 1 || minutes > MAX_MINUTES) {
+    await interaction.reply({
+      content: `⚠️ 집중 시간은 1~${MAX_MINUTES}분 사이로 입력해주세요.`,
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
 
   // 기존 타이머 확인
   if (pomodoroTimers.has(userId)) {
     await interaction.reply({
       content: '⚠️ 이미 진행 중인 뽀모도로가 있어요!\n중지하려면 `/뽀모도로중지`를 사용하세요.',
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
     return;
   }
@@ -38,7 +50,7 @@ async function startPomodoro(interaction, client) {
     minutes
   });
 
-  await interaction.reply({ content: `🍅 **뽀모도로 시작!**\n\n⏱️ ${minutes}분 집중 타이머가 시작되었어요.\n끝나면 DM으로 알려드릴게요!\n\n중지: \`/뽀모도로중지\``, ephemeral: true });
+  await interaction.reply({ content: `🍅 **뽀모도로 시작!**\n\n⏱️ ${minutes}분 집중 타이머가 시작되었어요.\n끝나면 DM으로 알려드릴게요!\n\n중지: \`/뽀모도로중지\``, flags: MessageFlags.Ephemeral });
 }
 
 // 휴식 타이머
@@ -51,7 +63,7 @@ async function startBreak(interaction, client) {
   if (pomodoroTimers.has(userId)) {
     await interaction.reply({
       content: '⚠️ 이미 진행 중인 타이머가 있어요!\n중지하려면 `/뽀모도로중지`를 사용하세요.',
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
     return;
   }
@@ -77,7 +89,7 @@ async function startBreak(interaction, client) {
   });
 
   const emoji = isLong ? '🛋️' : '☕';
-  await interaction.reply({ content: `${emoji} **휴식 시작!**\n\n⏱️ ${minutes}분 휴식 타이머가 시작되었어요.\n끝나면 DM으로 알려드릴게요!`, ephemeral: true });
+  await interaction.reply({ content: `${emoji} **휴식 시작!**\n\n⏱️ ${minutes}분 휴식 타이머가 시작되었어요.\n끝나면 DM으로 알려드릴게요!`, flags: MessageFlags.Ephemeral });
 }
 
 // 타이머 중지
@@ -86,7 +98,7 @@ async function stopPomodoro(interaction) {
   const timer = pomodoroTimers.get(userId);
 
   if (!timer) {
-    await interaction.reply({ content: '진행 중인 타이머가 없어요.', ephemeral: true });
+    await interaction.reply({ content: '진행 중인 타이머가 없어요.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -94,7 +106,7 @@ async function stopPomodoro(interaction) {
   pomodoroTimers.delete(userId);
 
   const typeText = timer.type === 'work' ? '뽀모도로' : '휴식';
-  await interaction.reply({ content: `⏹️ ${typeText} 타이머가 중지되었어요.`, ephemeral: true });
+  await interaction.reply({ content: `⏹️ ${typeText} 타이머가 중지되었어요.`, flags: MessageFlags.Ephemeral });
 }
 
 // 타이머 상태 확인
@@ -103,7 +115,7 @@ async function checkStatus(interaction) {
   const timer = pomodoroTimers.get(userId);
 
   if (!timer) {
-    await interaction.reply({ content: '진행 중인 타이머가 없어요.\n`/뽀모도로`로 시작하세요!', ephemeral: true });
+    await interaction.reply({ content: '진행 중인 타이머가 없어요.\n`/뽀모도로`로 시작하세요!', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -114,7 +126,7 @@ async function checkStatus(interaction) {
   const typeText = timer.type === 'work' ? '🍅 집중' : '☕ 휴식';
   await interaction.reply({
     content: `${typeText} 중\n⏱️ 남은 시간: **${remainingMin}분 ${remainingSec}초**`,
-    ephemeral: true
+    flags: MessageFlags.Ephemeral
   });
 }
 

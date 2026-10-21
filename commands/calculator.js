@@ -1,3 +1,5 @@
+const { MessageFlags } = require("discord.js");
+
 // 안전한 수학 표현식 평가 (eval 사용 금지)
 function safeEvaluate(expression) {
   // 허용 문자: 숫자, 소수점, 사칙연산, 괄호, 공백
@@ -42,7 +44,7 @@ async function execute(interaction) {
   } catch (error) {
     await interaction.reply({
       content: `❌ 계산 오류: ${error.message}\n사용 가능: 숫자, +, -, *, /, (, )`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 }

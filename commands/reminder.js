@@ -1,4 +1,10 @@
-const { parseTime, formatTime } = require("../utils/time");
+const { MessageFlags } = require("discord.js");
+const {
+  parseTime,
+  formatTime,
+  setLongTimeout,
+  clearLongTimeout,
+} = require("../utils/time");
 const config = require("../config");
 
 // 알림 저장소 (사용자별)
@@ -10,7 +16,7 @@ function setReminder(userId, channelId, reminderMessage, delayMs, client) {
   const id = reminderIdCounter++;
   const executeAt = Date.now() + delayMs;
 
-  const timeout = setTimeout(async () => {
+  const timeout = setLongTimeout(async () => {
     try {
       const user = await client.users.fetch(userId);
       await user.send(`⏰ **알림!**\n${reminderMessage}`);
@@ -58,7 +64,7 @@ async function executeSet(interaction, client) {
     await interaction.reply({
       content:
         "올바른 시간 형식을 입력해주세요.\n예: `30분`, `1시간`, `2일`, `1시간30분`",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -68,14 +74,24 @@ async function executeSet(interaction, client) {
   if (delayMs > maxMs) {
     await interaction.reply({
       content: `알림은 최대 ${config.reminder.maxDays}일까지 설정할 수 있습니다.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // 사용자별 최대 개수
+  const userReminders = reminders.get(interaction.user.id) || [];
+  if (userReminders.length >= config.reminder.maxPerUser) {
+    await interaction.reply({
+      content: `알림은 최대 ${config.reminder.maxPerUser}개까지 설정할 수 있습니다. \`/알림삭제\`로 정리해주세요.`,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   const id = setReminder(
     interaction.user.id,
-    interaction.channel.id,
+    interaction.channelId,
     reminderMessage,
     delayMs,
     client,
@@ -84,7 +100,7 @@ async function executeSet(interaction, client) {
 
   await interaction.reply({
     content: `⏰ **알림 설정 완료!**\n\n• ID: \`${id}\`\n• 시간: ${timeFormatted} 후\n• 메시지: ${reminderMessage}\n\nDM으로 알림을 보내드릴게요!\n\n⚠️ *서버 재시작 시 알림이 초기화될 수 있습니다.*`,
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
@@ -95,7 +111,7 @@ async function executeList(interaction) {
   if (!userReminders || userReminders.length === 0) {
     await interaction.reply({
       content: "설정된 알림이 없습니다.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -110,7 +126,7 @@ async function executeList(interaction) {
 
   await interaction.reply({
     content: `**설정된 알림 목록**\n\n${list}\n\n삭제: \`/알림삭제 ID\``,
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
@@ -122,7 +138,7 @@ async function executeDelete(interaction) {
   if (!userReminders) {
     await interaction.reply({
       content: "설정된 알림이 없습니다.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -131,15 +147,15 @@ async function executeDelete(interaction) {
   if (index === -1) {
     await interaction.reply({
       content: `ID \`${id}\` 알림을 찾을 수 없습니다.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  clearTimeout(userReminders[index].timeout);
+  clearLongTimeout(userReminders[index].timeout);
   userReminders.splice(index, 1);
 
-  await interaction.reply({ content: `✅ 알림 ID \`${id}\`가 삭제되었습니다.`, ephemeral: true });
+  await interaction.reply({ content: `✅ 알림 ID \`${id}\`가 삭제되었습니다.`, flags: MessageFlags.Ephemeral });
 }
 
 module.exports = {

@@ -1,5 +1,6 @@
 // commands/pick.js
 // 랜덤 뽑기
+const { MessageFlags } = require("discord.js");
 
 async function execute(interaction) {
   const input = interaction.options.getString("참가자");
@@ -14,15 +15,15 @@ async function execute(interaction) {
   if (participants.length < 2) {
     await interaction.reply({
       content: "⚠️ 참가자를 2명 이상 입력해주세요!\n예: `/뽑기 철수 영희 민수`",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  if (count >= participants.length) {
+  if (count < 1 || count >= participants.length) {
     await interaction.reply({
       content: `⚠️ 뽑을 인원(${count}명)이 참가자 수(${participants.length}명)보다 적어야 합니다!`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
